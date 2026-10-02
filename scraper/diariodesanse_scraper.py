@@ -427,11 +427,30 @@ class DiarioDeSanseScraper:
         self.robots = RobotFileParser()
         self.robots_available = False
         self.robots.set_url(urljoin(BASE_URL, "/robots.txt"))
+        self._load_robots()
+
+    def _load_robots(self) -> None:
+        """Read robots.txt with the crawler session.
+
+        urllib's default client is often rejected (HTTP 403). RobotFileParser
+        treats that status as disallow-all, which would skip a site whose
+        published robots.txt allows crawling.
+        """
         try:
-            self.robots.read()
-            self.robots_available = True
-        except Exception as exc:
+            response = self.session.get(self.robots.url, timeout=self.timeout_seconds)
+        except requests.RequestException as exc:
             logging.warning("Could not read robots.txt: %s", exc)
+            return
+        if response.status_code in (401, 403):
+            self.robots.disallow_all = True
+            self.robots_available = True
+            logging.warning("robots.txt returned HTTP %s; treating as disallow-all", response.status_code)
+            return
+        if response.status_code >= 400:
+            logging.warning("Could not read robots.txt: HTTP %s", response.status_code)
+            return
+        self.robots.parse(response.text.splitlines())
+        self.robots_available = True
 
     def _sleep_politely(self) -> None:
         delay = random.uniform(self.min_sleep_seconds, self.max_sleep_seconds)
